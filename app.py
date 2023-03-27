@@ -270,7 +270,8 @@ def main():
 
 st.title("Downloads")
 st.write(
-    "Metrics on how often Pandas is being downloaded from PyPI (Python's main "
-    "package repository, i.e. where `pip install pandas` downloads the package from)."
+    "Metrics on how often different packages is being downloaded from PyPI (Python's "
+    "main package repository, i.e. where `pip install [package]` downloads the package "
+    "from)."
 )
 main()
