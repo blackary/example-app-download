@@ -265,7 +265,7 @@ def main():
     else:
         selected_data_all = monthly_downloads(select_packages, start_date)
 
-    st.write(selected_data_all)
+    st.expander("Show raw data").write(selected_data_all)
 
     select_packages_df = pd.DataFrame(select_packages).rename(columns={0: "project"})
 
