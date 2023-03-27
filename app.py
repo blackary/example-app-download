@@ -1,10 +1,12 @@
+from __future__ import annotations
+
 from datetime import date, datetime
+from typing import cast
 
 import altair as alt
 import pandas as pd
+import pypistats
 import streamlit as st
-from google.cloud import bigquery
-from google.oauth2.service_account import Credentials
 
 st.set_page_config(page_icon="📥", page_title="Download App")
 
@@ -17,39 +19,101 @@ def icon(emoji: str):
     )
 
 
-# Share the connector across all users connected to the app
-@st.experimental_singleton()
-def get_connector():
-    """Create a connector using credentials filled in Streamlit secrets"""
-    credentials = Credentials.from_service_account_info(st.secrets["bigquery"])
-    connector = bigquery.Client(credentials=credentials)
-    return connector
+PACKAGES = [
+    "dash",
+    "extra-streamlit-components",
+    "gradio",
+    "hiplot",
+    "hydralit-components",
+    "jupyter",
+    "keras",
+    "numpy",
+    "pandas",
+    "panel",
+    "pollination-streamlit-io",
+    "pywebio",
+    "scikit-learn",
+    "st-btn-select",
+    "st-clickable-images",
+    "streamlit",
+    "streamlit-ace",
+    "streamlit-aggrid",
+    "streamlit-agraph",
+    "streamlit-autorefresh",
+    "streamlit-bokeh-events",
+    "streamlit-chat",
+    "streamlit-cookies-manager",
+    "streamlit-cropper",
+    "streamlit-disqus",
+    "streamlit-drawable-canvas",
+    "streamlit-echarts",
+    "streamlit-folium",
+    "streamlit-labelstudio",
+    "streamlit-lottie",
+    "streamlit-observable",
+    "streamlit-on-Hover-tabs",
+    "streamlit-option-menu",
+    "streamlit-pandas-profiling",
+    "streamlit-player",
+    "streamlit-plotly-events",
+    "streamlit-quill",
+    "streamlit-tags",
+    "streamlit-vega-lite",
+    "streamlit-webrtc",
+    "streamlit-wordcloud",
+    "streamlit_vtkjs",
+    "tensorflow",
+    "torch",
+    "voila",
+    "streamlit-extras",
+]
+
+DEFAULT_PACKAGES = ["streamlit", "dash", "gradio", "panel", "voila"]
 
 
-@st.experimental_memo(ttl=24 * 60 * 60)
-def get_data_frame_from_raw_sql(_connector, query: str) -> pd.DataFrame:
-    return _connector.query(query).to_dataframe()
+@st.cache_data(ttl=24 * 60 * 60)
+def _get_package_stats(
+    package: str, start_date: date, total: str | None = None
+) -> pd.DataFrame:
+    data: pd.DataFrame = pypistats.overall(
+        package,
+        start_date=str(start_date),
+        end_date=str(date.today()),
+        format="pandas",
+        total=total,
+        mirrors=True,
+    )  # type: ignore
+    data["project"] = package
+    return data
 
 
-big_query_connector = get_connector()
-get_data_frame_from_raw_sql(big_query_connector, "SELECT 'foo'")
+def get_stats(
+    packages: list[str], start_date: date, total: str | None = None
+) -> pd.DataFrame:
+    all_packages: list[pd.DataFrame] = []
+    for package in packages:
+        data = _get_package_stats(package, start_date, total)
+        all_packages.append(data)
+
+    return pd.concat(all_packages)
 
 
-def monthly_downloads(start_date):
-    df = get_data_frame_from_raw_sql(
-        big_query_connector,
-        f"""
-        SELECT
-            date_trunc(date, MONTH) as date,
-            project,
-            SUM(downloads) as downloads
-        FROM streamlit.streamlit.pypi_downloads
-        WHERE date >= '{start_date}'
-            AND project IN ('pandas', 'keras', 'torch', 'tensorflow', 'numpy', 'sci-kit learn')
-        GROUP BY 1,2
-        ORDER BY 1,2 ASC
-        """,
-    )
+def get_downloads(packages: list[str], start_date: date, sum_over: str = "monthly"):
+    total = None if sum_over == "weekly" else "monthly"
+
+    df = get_stats(packages, start_date=start_date, total=total)
+
+    if sum_over == "monthly":
+        pass
+    elif sum_over == "weekly":
+        df["date"] = pd.to_datetime(df["date"])
+        df = (
+            df.groupby("project")
+            .resample("W", on="date")
+            .sum()
+            .reset_index()
+            .sort_values(by="date")
+        )
 
     # Percentage difference (between 0-1) of downloads of current vs previous month
     df["delta"] = (df.groupby(["project"])["downloads"].pct_change()).fillna(0)
@@ -59,28 +123,12 @@ def monthly_downloads(start_date):
     return df
 
 
-def weekly_downloads(start_date):
-    df = get_data_frame_from_raw_sql(
-        big_query_connector,
-        f"""
-        SELECT
-            date_trunc(date, WEEK) as date,
-            project,
-            SUM(downloads) as downloads
-        FROM streamlit.streamlit.pypi_downloads
-        WHERE date >= '{start_date}'
-            AND project IN ('pandas', 'keras', 'torch', 'tensorflow', 'numpy', 'sci-kit learn')
-        GROUP BY 1,2
-        HAVING date_diff(CURRENT_DATE(), max(date_trunc(date, WEEK)), DAY) >=7
-        ORDER BY 1,2 ASC
-        """,
-    )
-    # Percentage difference (between 0-1) of downloads of current vs previous month
-    df["delta"] = (df.groupby(["project"])["downloads"].pct_change()).fillna(0)
-    # BigQuery returns the date column as type dbdate, which is not supported by Altair/Vegalite
-    df["date"] = df["date"].astype("datetime64")
+def monthly_downloads(packages: list[str], start_date: date):
+    return get_downloads(packages, start_date, sum_over="monthly")
 
-    return df
+
+def weekly_downloads(packages: list[str], start_date: date):
+    return get_downloads(packages, start_date, sum_over="weekly")
 
 
 def plot_all_downloads(
@@ -171,53 +219,23 @@ def pandasamlit_downloads(source, x="date", y="downloads"):
 
 
 def main():
-
-    # Note that page title/favicon are set in the __main__ clause below,
-    # so they can also be set through the mega multipage app (see ../pandas_app.py).
-
     col1, col2 = st.columns(2)
 
     with col1:
-        start_date = st.date_input(
-            "Select start date",
-            date(2020, 1, 1),
-            min_value=datetime.strptime("2020-01-01", "%Y-%m-%d"),
-            max_value=datetime.now(),
+        start_date = cast(
+            date,
+            st.date_input(
+                "Select start date",
+                date(2020, 1, 1),
+                min_value=datetime.strptime("2020-01-01", "%Y-%m-%d"),
+                max_value=datetime.now(),
+            ),
         )
 
     with col2:
-        time_frame = st.selectbox(
+        weekly_or_monthly = st.selectbox(
             "Select weekly or monthly downloads", ("weekly", "monthly")
         )
-
-    # PREPARING DATA FOR WEEKLY AND MONTHLY
-
-    df_monthly = monthly_downloads(start_date)
-    df_weekly = weekly_downloads(start_date)
-
-    pandas_data_monthly = df_monthly[df_monthly["project"] == "pandas"]
-    pandas_data_weekly = df_weekly[df_weekly["project"] == "pandas"]
-
-    package_names = df_monthly["project"].unique()
-
-    if time_frame == "weekly":
-        selected_data_streamlit = pandas_data_weekly
-        selected_data_all = df_weekly
-    else:
-        selected_data_streamlit = pandas_data_monthly
-        selected_data_all = df_monthly
-
-    ## PANDAS DOWNLOADS
-
-    st.header("Pandas downloads")
-
-    st.altair_chart(
-        pandasamlit_downloads(selected_data_streamlit), use_container_width=True
-    )
-
-    # OTHER DOWNLOADS
-
-    st.header("Compare other package downloads")
 
     instructions = """
     Click and drag line chart to select and pan date interval\n
@@ -226,13 +244,17 @@ def main():
     """
     select_packages = st.multiselect(
         "Select Python packages to compare",
-        package_names,
-        default=[
-            "pandas",
-            "keras",
-        ],
+        PACKAGES,
+        default=DEFAULT_PACKAGES,
         help=instructions,
     )
+
+    if weekly_or_monthly == "weekly":
+        selected_data_all = weekly_downloads(select_packages, start_date)
+    else:
+        selected_data_all = monthly_downloads(select_packages, start_date)
+
+    st.write(selected_data_all)
 
     select_packages_df = pd.DataFrame(select_packages).rename(columns={0: "project"})
 
