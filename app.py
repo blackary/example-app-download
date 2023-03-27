@@ -237,6 +237,17 @@ def main():
             "Select weekly or monthly downloads", ("weekly", "monthly")
         )
 
+    if weekly_or_monthly == "weekly":
+        df = weekly_downloads(["streamlit"], start_date)
+    else:
+        df = monthly_downloads(["streamlit"], start_date)
+
+    st.header("Streamlit downloads")
+
+    st.altair_chart(pandasamlit_downloads(df), use_container_width=True)
+
+    st.header("Compare other packages")
+
     instructions = """
     Click and drag line chart to select and pan date interval\n
     Hover over bar chart to view downloads\n
