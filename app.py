@@ -107,10 +107,11 @@ def get_downloads(packages: list[str], start_date: date, sum_over: str = "monthl
         pass
     elif sum_over == "weekly":
         df["date"] = pd.to_datetime(df["date"])
+        st.write(df)
         df = (
             df.groupby("project")
             .resample("W", on="date")
-            .sum()
+            .sum()["downloads"]
             .reset_index()
             .sort_values(by="date")
         )
@@ -118,7 +119,7 @@ def get_downloads(packages: list[str], start_date: date, sum_over: str = "monthl
     # Percentage difference (between 0-1) of downloads of current vs previous month
     df["delta"] = (df.groupby(["project"])["downloads"].pct_change()).fillna(0)
     # BigQuery returns the date column as type dbdate, which is not supported by Altair/Vegalite
-    df["date"] = df["date"].astype("datetime64")
+    df["date"] = df["date"].astype("datetime64[ns]")
 
     return df
 
@@ -134,7 +135,6 @@ def weekly_downloads(packages: list[str], start_date: date):
 def plot_all_downloads(
     source, x="date", y="downloads", group="project", axis_scale="linear"
 ):
-
     if st.checkbox("View logarithmic scale"):
         axis_scale = "log"
 
